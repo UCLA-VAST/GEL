@@ -9,10 +9,12 @@
 #include <future>
 #include <thread>
 #include <unordered_set>
+#include <unordered_map>
 #include <queue>
 #include <vector>
 #include <iostream>
 #include <random>
+#include <GEL/Util/Grid2D.h>
 #include <GEL/Util/AttribVec.h>
 #include <GEL/Geometry/Graph.h>
 #include <GEL/Geometry/build_bbtree.h>
@@ -168,8 +170,8 @@ namespace Geometry {
     }
 
     void saturate_graph(AMGraph3D& g, int hops, double dist_frac, double rad) {
-        AMGraph3D g2 = g;
-        using NodeMap = std::map<NodeID, pair<int, double>>;
+        using NodeMap = std::unordered_map<NodeID, pair<int, double>>;
+        vector<pair<NodeID, NodeID>> node_pairs;
         for(NodeID n0: g.node_ids()) {
             queue<NodeID> Q;
             Q.push(n0);
@@ -185,7 +187,7 @@ namespace Geometry {
                     if(node_map.count(m) == 0 || d_m < node_map[m].second) {
                         double d_n0_m = sqrt(g.sqr_dist(n0, m));
                         if (d_n0_m<dist_frac*d_m && d_n0_m < rad)
-                            g2.connect_nodes(n0, m);
+                            node_pairs.push_back(make_pair(n0, m));
                         if(h_n+1<hops)
                             Q.push(m);
                         node_map[m] = make_pair(h_n+1, d_m);
@@ -193,7 +195,8 @@ namespace Geometry {
                 }
             }
         }
-        g = g2;
+        for (auto [n0, n1]: node_pairs)
+            g.connect_nodes(n0, n1);
     }
 
     Vec3d geometric_median(const vector<Vec3d>& pts) {
@@ -586,6 +589,135 @@ namespace Geometry {
         return make_pair(avg_dist, max_dist);
         
     }
+
+
+
+using DistAttribVec = Util::AttribVec<AMGraph::NodeID, double>;
+
+vector<Vec3d> subtree_points(const AMGraph3D& g, NodeID _n, NodeID _p, const DistAttribVec& dist) {
+    queue<NodeID> Q;
+    Q.push(_n);
+    vector<Vec3d> pts;
+    while(!Q.empty()) {
+        auto n = Q.front();
+        Q.pop();
+        auto nbors = g.neighbors(n);
+        int parent_count = 0;
+        if (nbors.size() > 1)
+            for (auto nn: nbors) {
+                if(dist[nn]>dist[n])
+                    Q.push(nn);
+                else ++parent_count;
+            }
+        // If a node has more than one parent then we have a loop in the graph,
+        // and we return immediately. This is to avoid that the subtrees for two
+        // outgoing edges are identical.
+        if (parent_count>1)
+            return pts;
+        pts.push_back(g.pos[n]);
+    }
+    return pts;
+}
+
+
+
+std::vector<std::pair<int,int>>  symmetry_pairs(const AMGraph3D& g, NodeID n, double threshold) {
+    const int N_iter = 10; // Maybe excessive, but this is a relatively cheap step
+    auto average_vector = [](const vector<Vec3d>& pt_vec) {
+        Vec3d avg(0);
+        for (const auto& p: pt_vec)
+            avg += p;
+        return avg / pt_vec.size();
+    };
+    
+    // We run Dijkstra on the graph to be able to detect loops
+    BreadthFirstSearch bfs(g);
+    bfs.add_init_node(n);
+    while(bfs.Dijkstra_step());
+    
+    // For every outgoing edge, we create a vector of the vertices
+    // in the corresponding subtree.
+    vector<vector<Vec3d>> pt_vecs;
+    vector<NodeID> nbors = g.neighbors(n);
+    for (auto nn: nbors)
+        pt_vecs.push_back(subtree_points(g, nn, n, bfs.dist));
+   
+    // This lambda computes the symmetry score for edges i and j
+    auto symmetry_score = [&](int i, int j) {
+        Vec3d bary_i = average_vector(pt_vecs[i]);
+        Vec3d bary_j = average_vector(pt_vecs[j]);
+        auto [c,r] = approximate_bounding_sphere(pt_vecs[i]);
+
+        KDTree<Vec3d, int> tree_i;
+        for (int idx=0; idx<pt_vecs[i].size(); ++idx)
+            tree_i.insert(pt_vecs[i][idx], idx);
+        tree_i.build();
+        
+        // Initialize the axis of symmetry to the vector
+        // between barycenters.
+        Vec3d axis = normalize(bary_j - bary_i);
+        double err = 0;
+        for(int iter=0;iter<N_iter;++iter) {
+            err = 0;
+            Vec3d match_vec(0);
+            for(const auto& p: pt_vecs[j]) {
+                Vec3d v = p-bary_j;
+                Vec3d pp = v - 2 * dot(v, axis) * axis + bary_i;
+                double dist = DBL_MAX;
+                Vec3d k;
+                int val;
+                if (tree_i.closest_point(pp, dist, k, val)) {
+                    err += length(k-pp);
+                    match_vec += p-k;
+                }
+            }
+            err /= pt_vecs[j].size();
+            // New axis is normalized match vectors
+            axis = normalize(match_vec);
+        }
+        return 1-err/r;
+    };
+
+    // Finally, we compute the symmetry scores and keep only the best non-conflicting
+    // pairs. Two pairs are in conflict if the same edge belongs to both pair.
+    vector<tuple<double, int, int>> sym_scores;
+    for (int i=0; i<nbors.size(); ++i)
+        for (int j=i+1; j<nbors.size(); ++j)
+            if (pt_vecs[i].size()>1 && pt_vecs[j].size()>1) {
+                
+                double sscore = min(symmetry_score(i, j), symmetry_score(j, i));
+                
+                if (sscore > threshold)
+                    sym_scores.push_back(make_tuple(-sscore, i, j));
+            }
+    std::vector<std::pair<int,int>> npv;
+    vector<int> touched(nbors.size(), 0);
+    sort(sym_scores.begin(), sym_scores.end());
+    for(auto [s,i,j]: sym_scores) {
+        if(touched[i]==0 && touched[j]==0) {
+            touched[i] = 1;
+            touched[j] = 1;
+            npv.push_back(make_pair(i,j));
+        }
+    }
+    return npv;
+}
+
+void all_symmetry_pairs(AMGraph3D& g, double threshold) {
+    for (auto n: g.node_ids()) {
+        auto N = g.neighbors(n);
+        if(N.size()>2) {
+            auto npairs = symmetry_pairs(g, n, threshold);
+            for (auto [a,b]: npairs) {
+                auto na = N[a];
+                auto nb = N[b];
+                g.edge_color[g.find_edge(n, na)] = Vec3f(1,0,0);
+                g.edge_color[g.find_edge(n, nb)] = Vec3f(1,0,0);
+            }
+        }
+    }
+    
+}
 
 
 }

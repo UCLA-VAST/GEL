@@ -94,13 +94,22 @@ def save(fn, g):
     s = ct.c_char_p(fn.encode('utf-8'))
     return lib_py_gel.graph_save(g.obj, s)
 
-def to_mesh_cyl(g, fudge):
+def to_mesh_cyl(g, fudge=0.0):
     """ Creates a Manifold mesh from the graph. The first argument, g, is the
     graph we want converted, and fudge is a constant that is used to increase the radius
     of every node. This is useful if the radii are 0. """
     m = hmesh.Manifold()
     lib_py_gel.graph_to_mesh_cyl(g.obj, m.obj, fudge)
     return m
+
+def to_mesh_iso(g, fudge=0.0, res=256):
+    """ Creates a Manifold mesh from the graph. The first argument, g, is the
+    graph we want converted, and fudge is a constant that is used to increase the radius
+    of every node. This is useful if the radii are 0. """
+    m = hmesh.Manifold()
+    lib_py_gel.graph_to_mesh_iso(g.obj, m.obj, fudge, res)
+    return m
+
 
 def smooth(g, iter=1, alpha=1.0):
     """ Simple Laplacian smoothing of a graph. The first argument is the Graph, g, iter

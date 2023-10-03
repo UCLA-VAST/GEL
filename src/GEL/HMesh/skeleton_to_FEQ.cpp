@@ -10,6 +10,7 @@
 #include <GEL/Geometry/graph_io.h>
 #include <GEL/Geometry/graph_util.h>
 #include <GEL/Geometry/SphereDelaunay.h>
+#include <GEL/HMesh/comb_quad.h>
 
 using namespace Geometry;
 using namespace CGLA;
@@ -32,15 +33,15 @@ map<FaceID, VertexID> one_ring_face_vertex;
 map<FaceID, int> val2_faces;
 
 void clear_global_arrays() {
-  val2deg.clear();
-  branchdeg.clear();
-  branchface.clear();
-  branch_best_face.clear();
-  branch_best_vertex.clear();
-  branch2vert.clear();
-  face_vertex.clear();
-  one_ring_face_vertex.clear();
-  return;
+    val2deg.clear();
+    branchdeg.clear();
+    branchface.clear();
+    branch_best_face.clear();
+    branch_best_vertex.clear();
+    branch2vert.clear();
+    face_vertex.clear();
+    one_ring_face_vertex.clear();
+    return;
 }
 
 //Graph util functions
@@ -58,45 +59,45 @@ vector<NodeID> next_neighbours(const Geometry::AMGraph3D& g, NodeID prev, NodeID
 }
 
 NodeID next_jn(const Geometry::AMGraph3D& g, NodeID n, NodeID nn) {
-  auto N = next_neighbours(g, n, nn);
-  NodeID curr_node = nn;
-  NodeID prev_node = n;
+    auto N = next_neighbours(g, n, nn);
+    NodeID curr_node = nn;
+    NodeID prev_node = n;
 
-  while(true) {
-      auto curr_nbs = next_neighbours(g, prev_node, curr_node);
-      if(curr_nbs.size() != 1) {
-          return curr_node;
-      }
-      prev_node = curr_node;
-      curr_node = curr_nbs[0];
-  }
+    while(true) {
+        auto curr_nbs = next_neighbours(g, prev_node, curr_node);
+        if(curr_nbs.size() != 1) {
+            return curr_node;
+        }
+        prev_node = curr_node;
+        curr_node = curr_nbs[0];
+    }
 
 }
 
 double graph_length(const Geometry::AMGraph3D& g, NodeID n, NodeID nn) {
-  vector<NodeID> branch_path;
-  NodeID curr_node = nn;
-  NodeID prev_node = n;
+    vector<NodeID> branch_path;
+    NodeID curr_node = nn;
+    NodeID prev_node = n;
 
-  double graph_len = 0.0;
-  int leaf_flag = 0;
+    double graph_len = 0.0;
+    int leaf_flag = 0;
 
-  while(true) {
-      auto curr_nbs = next_neighbours(g, prev_node, curr_node);
-      if(curr_nbs.size() > 1)
-          break;
-      else if(curr_nbs.size() == 0) {
-          branch_path.push_back(curr_node); graph_len += abs(length(g.pos[curr_node] - g.pos[prev_node]));leaf_flag = 1; break;
-      }
-      else {
-          branch_path.push_back(curr_node);
-          graph_len += abs(length(g.pos[curr_node] - g.pos[prev_node]));
-          prev_node = curr_node;
-          curr_node = curr_nbs[0];
-      }
-  }
+    while(true) {
+        auto curr_nbs = next_neighbours(g, prev_node, curr_node);
+        if(curr_nbs.size() > 1)
+            break;
+        else if(curr_nbs.size() == 0) {
+            branch_path.push_back(curr_node); graph_len += abs(length(g.pos[curr_node] - g.pos[prev_node]));leaf_flag = 1; break;
+        }
+        else {
+            branch_path.push_back(curr_node);
+            graph_len += abs(length(g.pos[curr_node] - g.pos[prev_node]));
+            prev_node = curr_node;
+            curr_node = curr_nbs[0];
+        }
+    }
 
-  return graph_len;
+    return graph_len;
 
 }
 
@@ -140,7 +141,7 @@ void id_preserving_cc(HMesh::Manifold& m_in) {
             ftouched[f2] = Valid;
             m_in.split_face_by_edge(f1, face2centerv.find(f1)->second, opp_v);
             m_in.split_face_by_edge(f2, face2centerv.find(f2)->second, opp_v);
-         }
+        }
 
     }
     for (auto h_dissolve: new_edges)
@@ -150,21 +151,22 @@ void id_preserving_cc(HMesh::Manifold& m_in) {
 
 }
 
-void quad_mesh_leaves(HMesh::Manifold& m) {
+void quad_mesh_leaves(HMesh::Manifold& m, VertexAttributeVector<NodeID>& vertex2node) {
 
     vector<FaceID> base_faces;
     vector<HalfEdgeID> new_edges;
 
     for(auto f: m.faces())
         if(no_edges(m, f) != 4  || (val2_faces.count(f) && one_ring_face_vertex.count(f))) {
-             HalfEdgeID ref_h;
+            HalfEdgeID ref_h;
 
-             VertexID ref_v  = one_ring_face_vertex[f];
+            VertexID ref_v  = one_ring_face_vertex[f];
 
-             if(ref_v == InvalidVertexID)
-                 continue;
+            if(ref_v == InvalidVertexID)
+                continue;
 
             VertexID center_v = m.split_face_by_vertex(f);
+            vertex2node[center_v] = vertex2node[m.walker(center_v).vertex()];
             int counter = 0;
             int dissolve_flag = 0;
             for(Walker w = m.walker(center_v); !w.full_circle(); w = w.circulate_vertex_ccw()) {
@@ -269,130 +271,9 @@ bool check_convex(const HMesh::Manifold &m, HalfEdgeID h) {
         return true;
 }
 
-void stellate_face_set_retopo(HMesh::Manifold &m, const HMesh::FaceSet& fs, const HMesh::HalfEdgeSet& hs) {
-
-  HalfEdgeSet interior_edges;
-
-  HalfEdgeSet visited;
-
-  VertexSet aux_vertices;
-
-  for (auto h : hs) {
-    if(visited.find(h) != visited.end() || visited.find(m.walker(h).opp().halfedge()) != visited.end())
-      continue;
-
-    VertexID interior_vertex = m.walker(h).next().vertex();
-    VertexID interior_vertex_opp = m.walker(h).prev().prev().vertex();
-
-    if(aux_vertices.find(interior_vertex) != aux_vertices.end() || aux_vertices.find(interior_vertex_opp) != aux_vertices.end()) {
-      m.flip_edge(h);
-      visited.insert(h);
-      visited.insert(m.walker(h).opp().halfedge());
-      continue;
-    }
-
-
-    visited.insert(h);
-    visited.insert(m.walker(h).opp().halfedge());
-    VertexID curr_v = split_LIE(m, h);
-    aux_vertices.insert(curr_v);
-    for (auto h_flip : hs) {
-      if(visited.find(h_flip) == visited.end() && (m.walker(h_flip).next().vertex() == curr_v || m.walker(h_flip).prev().prev().vertex() == curr_v) && check_planar(m,h_flip)) {
-        m.flip_edge(h_flip);
-        visited.insert(h_flip);
-        visited.insert(m.walker(h_flip).opp().halfedge());
-      }
-    }
-
-  }
-  for (auto h_flip : m.halfedges()) {
-    VertexID interior_vertex = m.walker(h_flip).next().vertex();
-    if(visited.find(h_flip) == visited.end() && aux_vertices.find(interior_vertex) != aux_vertices.end() && check_planar(m, h_flip)) {
-      m.flip_edge(h_flip);
-      visited.insert(h_flip);
-      visited.insert(m.walker(h_flip).opp().halfedge());
-    }
-  }
-
-}
-
-vector<FaceSet> retopologize_planar_regions(HMesh::Manifold &m) {
-
-// find triangles with low dihedral angle between them
-
-    vector<FaceSet> planar_regions;
-
-    vector<HalfEdgeSet> planar_edges;
-
-    // identify planar regions
-
-    FaceSet global_visited;
-
-    for (auto f : m.faces()) {
-
-        if(global_visited.find(f) != global_visited.end())
-            continue;
-
-        FaceSet planar_set;
-        HalfEdgeSet planar_edge_set;
-
-        FaceSet visited;
-
-        queue<FaceID> Q;
-
-        Q.push(f);
-
-        while(!Q.empty()) {
-
-            FaceID curr_f = Q.front();
-
-            HalfEdgeSet edge_set;
-
-
-            for(Walker w = m.walker(curr_f); !w.full_circle(); w = w.circulate_face_ccw()) {
-                edge_set.insert(w.halfedge());
-            }
-
-            for (auto h : edge_set)
-                if(check_planar(m,h)) {
-                  planar_edge_set.insert(h);
-                  planar_edge_set.insert(m.walker(h).opp().halfedge());
-                  FaceID f1 = m.walker(h).face();
-                  FaceID f2 = m.walker(h).opp().face();
-
-                  planar_set.insert(f1);
-                  planar_set.insert(f2);
-
-                  global_visited.insert(f1);
-                  global_visited.insert(f2);
-
-                  if(visited.find(f1) == visited.end())
-                    Q.push(f1);
-                  if(visited.find(f2) == visited.end())
-                    Q.push(f2);
-                }
-
-            visited.insert(curr_f);
-            Q.pop();
-       }
-
-       planar_regions.push_back(planar_set);
-       planar_edges.push_back(planar_edge_set);
-    }
-    int id = 0;
-    for (auto fset : planar_regions) {
-      if(fset.size() > 2)
-        stellate_face_set_retopo(m, fset, planar_edges[id]);
-      id++;
-    }
-
-    return planar_regions;
-
-}
-
 //Graph - Mesh relationship Functions
 
-VertexID branch2vertex (HMesh::Manifold &m_out, const Geometry::AMGraph3D& g,
+VertexID branch2vertex (const HMesh::Manifold &m_out, const Geometry::AMGraph3D& g,
                         NodeID n, NodeID nn, const Util::AttribVec<NodeID, FaceSet>& node2fs) {
 
     Vec3d vert_pos = branch2vert.find(std::make_pair(n,nn))->second;
@@ -405,7 +286,7 @@ VertexID branch2vertex (HMesh::Manifold &m_out, const Geometry::AMGraph3D& g,
 
 }
 
-void init_branch_degree(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
+void init_branch_degree(const HMesh::Manifold &m, const Geometry::AMGraph3D& g,
                         const Util::AttribVec<NodeID, FaceSet>& node2fs) {
 
 
@@ -417,7 +298,7 @@ void init_branch_degree(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
         if(N.size() > 2) {
 
 
-        // for each outgoing arc
+            // for each outgoing arc
 
             for (auto nn: N) {
 
@@ -428,7 +309,7 @@ void init_branch_degree(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
 
                 int leaf_flag = 0;
 
-              //traverse val 2 nodes to next branch node
+                //traverse val 2 nodes to next branch node
 
 
                 while(true) {
@@ -461,16 +342,25 @@ void init_branch_degree(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
                 if(dest_branch_degree < src_branch_degree) {
                     path_degree = (dest_branch_degree)*2;
                     jn_degree = dest_branch_degree - 1;
+                    cout << "dst < src " << endl;
+                    cout << "dst " << dest_branch_degree << endl;
+                    cout << "src " << src_branch_degree << endl;
                 }
 
                 else if (dest_branch_degree == src_branch_degree) {
                     path_degree = dest_branch_degree*2;
                     jn_degree = dest_branch_degree;
+                    // cout << "dst == src " << endl;
+                    // cout << "dst " << dest_branch_degree << endl;
+                    // cout << "src " << src_branch_degree << endl;
                 }
 
                 else {
                     jn_degree = src_branch_degree - 1;
                     path_degree = (src_branch_degree)*2;
+                    cout << "dst > src " << endl;
+                    cout << "dst " << dest_branch_degree << endl;
+                    cout << "src " << src_branch_degree << endl;
                 }
 
                 auto key = std::make_pair(n,nn);
@@ -487,19 +377,19 @@ void init_branch_degree(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
     bool has_junction = false;
 
     for (auto n: g.node_ids()) {
-      if(g.valence(n) > 2)
-        has_junction = true;
+        if(g.valence(n) > 2)
+            has_junction = true;
     }
 
     if(!has_junction)
-      for (auto n : g.node_ids())
-        if(g.valence(n) <= 2)
-          if(val2deg.find(n) == val2deg.end())
-            val2deg.insert(std::make_pair(n,4));
+        for (auto n : g.node_ids())
+            if(g.valence(n) <= 2)
+                if(val2deg.find(n) == val2deg.end())
+                    val2deg.insert(std::make_pair(n,4));
 
 }
 
-FaceID branch2face (HMesh::Manifold &m_out,
+FaceID branch2face (const HMesh::Manifold &m_out,
                     const Geometry::AMGraph3D& g, NodeID n, NodeID nn,
                     Util::AttribVec<NodeID, FaceSet>& node2fs) {
 
@@ -542,7 +432,7 @@ FaceID branch2face (HMesh::Manifold &m_out,
 
 }
 
-double face_dist(HMesh::Manifold &m_out, const Geometry::AMGraph3D& g, NodeID n, NodeID nn, FaceID f) {
+double face_dist(const HMesh::Manifold &m_out, const Geometry::AMGraph3D& g, NodeID n, NodeID nn, FaceID f) {
     Vec3d pn = g.pos[n];
     Vec3d pnn = g.pos[nn];
     Vec3d v_n_nn = pnn - pn;
@@ -557,7 +447,7 @@ double face_dist(HMesh::Manifold &m_out, const Geometry::AMGraph3D& g, NodeID n,
 
     float intersection_x = 0;
     if(dot(face_normal, v_n_nn) != 0)
-       intersection_x = (face_plane_d - dot(face_normal, pn)) / dot(face_normal, v_n_nn);
+        intersection_x = (face_plane_d - dot(face_normal, pn)) / dot(face_normal, v_n_nn);
 
     Vec3d intersection_pt = pn + intersection_x*v_n_nn;
 
@@ -567,7 +457,7 @@ double face_dist(HMesh::Manifold &m_out, const Geometry::AMGraph3D& g, NodeID n,
 
 }
 
-void init_branch_face_pairs(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
+void init_branch_face_pairs(const HMesh::Manifold &m, const Geometry::AMGraph3D& g,
                             Util::AttribVec<NodeID, FaceSet>& node2fs) {
 
     for (auto n:g.node_ids()) {
@@ -632,39 +522,40 @@ vector<FaceID> create_face_pair(Manifold& m, const Vec3d& pos, const Mat3x3d& _R
         }
 
     vector<FaceID> fvec;
-        vector<Vec3d> front_pts;
-        for(int i = 0; i < num_sides; i++)
-        {
-            Vec3d _p = face_points[i];
-            Vec3d p(0);
-            p[(0+axis)%3] += _p[0];
-            p[(1+axis)%3] += _p[1];
-            p[(2+axis)%3] += _p[2];
-            front_pts.push_back(R*p+pos);
-        }
-        fvec.push_back(m.add_face(front_pts));
+    vector<Vec3d> front_pts;
+    for(int i = 0; i < num_sides; i++)
+    {
+        Vec3d _p = face_points[i];
+        Vec3d p(0);
+        p[(0+axis)%3] += _p[0];
+        p[(1+axis)%3] += _p[1];
+        p[(2+axis)%3] += _p[2];
+        front_pts.push_back(R*p+pos);
+    }
+    fvec.push_back(m.add_face(front_pts));
 
-        vector<Vec3d> back_pts;
-        for (int i = 0; i < num_sides; i++) {
-            int curr_index = 1 - i;
-            if(curr_index < 0 )
-                curr_index = num_sides + curr_index;
-            Vec3d _p = face_points[curr_index];
-            Vec3d p(0);
-            p[(0+axis)%3] += _p[0];
-            p[(1+axis)%3] += _p[1];
-            p[(2+axis)%3] += _p[2];
-            back_pts.push_back(R*p+pos);
-        }
+    vector<Vec3d> back_pts;
+    for (int i = 0; i < num_sides; i++) {
+        int curr_index = 1 - i;
+        if(curr_index < 0 )
+            curr_index = num_sides + curr_index;
+        Vec3d _p = face_points[curr_index];
+        Vec3d p(0);
+        p[(0+axis)%3] += _p[0];
+        p[(1+axis)%3] += _p[1];
+        p[(2+axis)%3] += _p[2];
+        back_pts.push_back(R*p+pos);
+    }
 
 
-        fvec.push_back(m.add_face(back_pts));
+    fvec.push_back(m.add_face(back_pts));
 
     return fvec;
 }
 
 void val2nodes_to_boxes(const Geometry::AMGraph3D& g, HMesh::Manifold& mani,
                         Util::AttribVec<NodeID, FaceSet>& n2fs,
+                        VertexAttributeVector<NodeID>& vertex2node,
                         const vector<double>& r) {
     Vec3d c(0);
     for(auto n: g.node_ids())
@@ -682,15 +573,15 @@ void val2nodes_to_boxes(const Geometry::AMGraph3D& g, HMesh::Manifold& mani,
             }
         }
     if(g.valence(middle_node) == 0)
-      for (auto n : g.node_ids())
-        if(g.valence(n) > 0)
-        {
-          double d = sqr_length(g.pos[n] - c);
-          if(d < min_dist) {
-            min_dist = d;
-            middle_node = n;
-          }
-        }
+        for (auto n : g.node_ids())
+            if(g.valence(n) > 0)
+            {
+                double d = sqr_length(g.pos[n] - c);
+                if(d < min_dist) {
+                    min_dist = d;
+                    middle_node = n;
+                }
+            }
     Util::AttribVec<NodeID, int> touched(g.no_nodes(),0);
     Util::AttribVec<NodeID, Mat3x3d> warp_frame(g.no_nodes(),identity_Mat3x3d());
 
@@ -698,7 +589,7 @@ void val2nodes_to_boxes(const Geometry::AMGraph3D& g, HMesh::Manifold& mani,
     Q.push(middle_node);
 
     if(g.valence(middle_node) > 2)
-      touched[middle_node] = 1;
+        touched[middle_node] = 1;
 
     while(!Q.empty()) {
         NodeID n = Q.front();
@@ -709,13 +600,13 @@ void val2nodes_to_boxes(const Geometry::AMGraph3D& g, HMesh::Manifold& mani,
                 touched[m] = 1;
                 Vec3d v = g.pos[m]-g.pos[n];
                 if(g.neighbors(m).size() <= 2) {
-                  auto node_list = next_neighbours(g, n, m);
-                  Vec3d nb_v(0);
-                  for(auto m_nb : node_list)
-                    nb_v = g.pos[m_nb];
-                  if(nb_v != Vec3d(0)) {
-                    v = 0.5*(v + (nb_v - g.pos[m]));
-                  }
+                    auto node_list = next_neighbours(g, n, m);
+                    Vec3d nb_v(0);
+                    for(auto m_nb : node_list)
+                        nb_v = g.pos[m_nb];
+                    if(nb_v != Vec3d(0)) {
+                        v = 0.5*(v + (nb_v - g.pos[m]));
+                    }
                 }
                 Mat3x3d M = warp_frame[n];
                 Vec3d warp_v = M * v;
@@ -742,8 +633,10 @@ void val2nodes_to_boxes(const Geometry::AMGraph3D& g, HMesh::Manifold& mani,
                     auto face_list = create_face_pair(mani, g.pos[m], transpose(M)*S, max_idx, val2deg.find(m)->second);
                     stitch_mesh(mani, 1e-10);
                     for(auto f: face_list) {
-                            n2fs[m].insert(f);
-                            val2_faces.insert(std::make_pair(f, 1));
+                        n2fs[m].insert(f);
+                        val2_faces.insert(std::make_pair(f, 1));
+                        for(auto v: mani.incident_vertices(f))
+                            vertex2node[v] = m;
                     }
                 }
 
@@ -758,42 +651,18 @@ int add_ghosts(const vector<Vec3i>& tris, vector<Vec3d>& pts) {
     /* This function creates extra points to add to the BNP vertices for a branch node.
      These extra points are called ghost points because they do not correspond to an outgoing
      edge.
-
-     To do this, we categorize nodes according to three categories
-
-     Type A (flat): All outgoing edges lie more or less in a plane for this type of nodes, and
-     the BNP becomes very flat.
-
-     Type B (semi flat): All outgoing edges again lie more or less in a plane, but on one side of
-     the BNP one or more additional outgoing edges emanate.
-
-     Type C (general): This type comprises everything else. For type C nodes, it is hard to say
-     something meaningful about the configuration of outgoing edges.
-
-     The idea behind this function is to add two ghost points to Type A nodes, a single for Type B
-     and 0 for Type C. This heuristic is based on the observation that for Type A this will lead to
-     valence 4 vertices generally since most of the vertices will be connected to two neighbouring
-     points and the two ghosts. For Type B, the same is true if there is a single outgoing edge
-     perpendicular to the edges that form a flat region.
-
-     Procedure:
-     Initially, we add a ghost point for every triangle in the
-     initial BNP where the smallest pairwise dot product between the vertices
-     is less than -0.1. The ghost point is the normal of the triangle.
-     Intuitively, this adds what corresponds to a new outgoing edge in a direction
-     of the sphere that is otherwise not well covered.
      */
+
     vector<Vec3d> ghost_pts;
+
+    for(auto p: pts) {
+        ghost_pts.push_back(-p);
+    }
     for(auto t: tris) {
-        const auto& p0 = pts[t[0]];
-        const auto& p1 = pts[t[1]];
-        const auto& p2 = pts[t[2]];
         Vec3d v1 = pts[t[1]]-pts[t[0]];
         Vec3d v2 = pts[t[2]]-pts[t[0]];
-        double l = min(dot(p0, p1), min( dot(p1,p2), dot(p2,p0)));
-        if (l<0.25) {
-            ghost_pts.push_back(normalize(cross(v1, v2)));
-        }
+        Vec3d n = cross(v1,v2);
+        ghost_pts.push_back(normalize(n));
     }
 
     /* Next, we cluster the ghost points. This is because in flatish
@@ -807,7 +676,7 @@ int add_ghosts(const vector<Vec3i>& tris, vector<Vec3d>& pts) {
         }
         for(int j=i+1; j<ghost_pts.size(); ++j) {
             if (cluster_id[j] == -1) {
-                if (dot(ghost_pts[i], ghost_pts[j]) > 0.3)
+                if (dot(ghost_pts[i], ghost_pts[j]) > 0.5)
                     cluster_id[j] = cluster_id[i];
             }
         }
@@ -827,126 +696,155 @@ int add_ghosts(const vector<Vec3i>& tris, vector<Vec3d>& pts) {
         vector<double> dots;
         for(const auto& p_orig: pts)
             dots.push_back(dot(p,p_orig));
-        if(*max_element(begin(dots), end(dots))<0.3)
+        if(*max_element(begin(dots), end(dots))<0.5)
             ghost_pts.push_back(p);
     }
-    
-    /* If there are more than three ghost points, it is a Type C BNP, and
-     we do nothing. */
-    if(ghost_pts.size()>2)
-        return 0;
-        
+
     for (auto g: ghost_pts)
         pts.push_back(g);
 
     return ghost_pts.size();
 }
 
-void construct_bnps(HMesh::Manifold &m_out, const Geometry::AMGraph3D& g, Util::AttribVec<NodeID, FaceSet>& node2fs, vector<double> r_arr) {
+void construct_bnps(HMesh::Manifold &m_out,
+                    const Geometry::AMGraph3D& g,
+                    Util::AttribVec<NodeID, FaceSet>& node2fs,
+                    VertexAttributeVector<NodeID>& vertex2node,
+                    const vector<double>& r_arr,
+                    bool use_symmetry) {
 
-  map<int, pair<NodeID,NodeID>> spts2branch;
-  map <int, VertexID> spts2vertexid;
+    auto project_to_sphere = [](Manifold& m, const Vec3d& pn, double r) {
+        VertexAttributeVector<Vec3d> norms;
+        for(auto v: m.vertices()) {
+            if (length(m.pos(v))<0.5)
+                norms[v] = normal(m,v);
+            else norms[v] = normalize(m.pos(v));
+        }
+        for(auto v: m.vertices()) {
+            m.pos(v) = pn + r * norms[v];
+        }
+    };
 
-  double base_r = 0.5 * g.average_edge_length();
+    auto split_faces = [](Manifold& m) {
+        vector<FaceID> face_list;
+        for (auto f: m.faces())
+            face_list.push_back(f);
+        for (FaceID f: face_list)
+            m.split_face_by_vertex(f);
+    };
 
-  double r = base_r;
+    auto split_edge = [](Manifold& m, VertexID v1, VertexID v2, bool split_triangles=false) -> pair<VertexID, VertexID> {
+        auto vertex_pair = make_pair(InvalidVertexID,InvalidVertexID);
+        for(auto h: m.halfedges()) {
+            auto w = m.walker(h);
+            if (w.vertex()==v1 && w.opp().vertex()==v2) {
+                FaceID f1 = w.face();
+                FaceID f2 = w.opp().face();
+                vertex_pair = make_pair(w.next().vertex(), w.opp().next().vertex());
+                VertexID vn = m.split_edge(h);
+                if (split_triangles) {
+                    m.split_face_by_edge(f1,vertex_pair.first, vn);
+                    m.split_face_by_edge(f2,vertex_pair.second, vn);
+                }
+                break;
+            }
+        }
+        return vertex_pair;
+    };
 
-  for (auto n: g.node_ids()) {
+    map<int, pair<NodeID,NodeID>> spts2branch;
+    map<int, VertexID> spts2vertexid;
 
-          auto N = g.neighbors(n);
-          if(N.size()>2) {
-              Manifold m;
-              int node_vertex_count =0;
-              Vec3d pn = g.pos[n];
+    for (auto n: g.node_ids()) {
 
-              r = r_arr[n];
+        auto N = g.neighbors(n);
+        if(N.size()>2) {
+            Manifold m;
+            int node_vertex_count =0;
+            Vec3d pn = g.pos[n];
 
-              auto project_to_sphere = [&]() {
-                  for(int iter=0;iter<1;++iter) {
-                      auto new_pos = m.positions_attribute_vector();
-                      for(auto v: m.vertices())
-                          new_pos[v] = normalize(1*normal(m,v) + m.pos(v));
-                      m.positions_attribute_vector() = new_pos;
-                  }
-                  for(auto v: m.vertices())
-                      m.pos(v) = normalize(m.pos(v))*r + pn;
-              };
-              vector<Vec3d> spts;
-              int spts_vertex_count = 0;
+            vector<Vec3d> spts;
+            int spts_vertex_count = 0;
 
-              spts2branch.clear();
-              spts2vertexid.clear();
+            spts2branch.clear();
+            spts2vertexid.clear();
 
-              for (auto nn: N) {
-                  Vec3d pnn = g.pos[nn];
-                  spts.push_back(normalize(pnn-pn));
+            for (auto nn: N) {
+                Vec3d pnn = g.pos[nn];
+                spts.push_back(normalize(pnn-pn));
 
-                  auto spts_value = std::make_pair(n,nn);
-                  auto spts_key = spts_vertex_count;
-                  spts2branch.insert(std::make_pair(spts_key,spts_value));
-                  spts_vertex_count++;
+                auto spts_value = std::make_pair(n,nn);
+                auto spts_key = spts_vertex_count;
+                spts2branch.insert(std::make_pair(spts_key,spts_value));
+                spts_vertex_count++;
 
-              }
-              std::vector<CGLA::Vec3i> stris = SphereDelaunay(spts);
-              bool ghost_added = false;
-              if (add_ghosts(stris, spts)>0) {
-                  stris = SphereDelaunay(spts);
-                  ghost_added = true;
-              }
+            }
+            std::vector<CGLA::Vec3i> stris = SphereDelaunay(spts);
 
-              for(auto tri: stris) {
-                  vector<Vec3d> triangle_pts;
-                  for(int i=0;i<3; ++i) {
-                      triangle_pts.push_back(spts[tri[i]]);
-                      node_vertex_count++;
+            vector<pair<int,int>> npv;
+            if(use_symmetry && (N.size()==3 || N.size()==4)) {
+                npv = symmetry_pairs(g, n, 0.5);
+            }
 
-                  }
-                  m.add_face(triangle_pts);
-              }
-              stitch_mesh(m, 1e-10);
+            if (npv.size()==0)
+                if (add_ghosts(stris, spts)>0)
+                    stris = SphereDelaunay(spts);
 
-              m.cleanup();
+            for(auto tri: stris) {
+                vector<Vec3d> triangle_pts;
+                for(int i=0;i<3; ++i) {
+                    triangle_pts.push_back(spts[tri[i]]);
+                    node_vertex_count++;
 
-              for(auto v: m.vertices())
-                  for(int i = 0; i < spts.size(); i++)
-                      if(sqr_length(m.pos(v) - spts[i]) < 0.0001)
-                          spts2vertexid.insert(std::make_pair(i, v));
+                }
+                m.add_face(triangle_pts);
+            }
+            stitch_mesh(m, 1e-10);
 
+            for(auto v: m.vertices())
+                for(int i = 0; i < spts.size(); i++)
+                    if(sqr_length(m.pos(v) - spts[i]) < 0.0001)
+                        spts2vertexid.insert(std::make_pair(i, v));
 
-//              if(N.size() > 3 && !ghost_added)
-//                vector<FaceSet> planar_regions = retopologize_planar_regions(m);
+            if(npv.size()>0) {
+                if (N.size() == 3) {
+                    VertexID v1 = spts2vertexid[npv[0].first];
+                    VertexID v2 = spts2vertexid[npv[0].second];
+                    split_edge(m, v1, v2, false);
+                    split_faces(m);
+                }
+                else if (N.size() == 4) { // tetrahedron
+                    VertexID v1 = spts2vertexid[npv[0].first];
+                    VertexID v2 = spts2vertexid[npv[0].second];
+                    auto [v3, v4] = split_edge(m, v1, v2, true);
+                    split_edge(m, v3, v4, true);
+                }
+            }
 
-              taubin_smooth(m, 1);
+            project_to_sphere(m, pn, r_arr[n]);
 
-              project_to_sphere();
+            quad_valencify(m);
+            id_preserving_cc(m);
 
-              for(int iter=0;iter<10;++iter) {
-                  auto new_pos = m.positions_attribute_vector();
-                  for(auto v: m.vertices())
-                      new_pos[v] = 0.01*r*normal(m,v) + m.pos(v);
-                  m.positions_attribute_vector() = new_pos;
-              }
+            for(int i = 0; i < spts.size(); i++) {
+                auto key = spts2branch.find(i)->second;
+                auto value = m.pos(spts2vertexid.find(i)->second);
+                branch2vert.insert(std::make_pair(key,value));
+            }
+            m.cleanup();
 
-              for(int i = 0; i < spts.size(); i++) {
-                  auto key = spts2branch.find(i)->second;
-                  auto value = m.pos(spts2vertexid.find(i)->second);
-                  branch2vert.insert(std::make_pair(key,value));
-              }
+            size_t no_faces_before_merge = m_out.no_faces();
+            size_t no_vertices_before_merge = m_out.allocated_vertices();
 
-              m.cleanup();
-
-              size_t no_faces_before = m_out.no_faces();
-
-
-
-              m_out.merge(m);
-              for(auto f: m_out.faces())
-                  if(f.index >= no_faces_before)
-                      node2fs[n].insert(f);
-          }
+            m_out.merge(m);
+            for(auto f: m_out.faces())
+                if(f.index >= no_faces_before_merge)
+                    node2fs[n].insert(f);
+            for(auto v: m_out.vertices())
+                if (v.index >= no_vertices_before_merge)
+                    vertex2node[v] = n;
+        }
     }
-    m_out.cleanup();
-    stitch_mesh(m_out, 1e-10);
 }
 
 void merge_branch_faces(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
@@ -1051,8 +949,8 @@ void merge_branch_faces(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
                     else
                         m.merge_faces(f, boundary_edge_2);
 
-                    }
-              }
+                }
+            }
         }
 
     }
@@ -1063,306 +961,7 @@ void merge_branch_faces(HMesh::Manifold &m, const Geometry::AMGraph3D& g,
 
 //Bridging Functions
 
-FaceID rotate_bridge_face_set_once(HMesh::Manifold& m, FaceID f0) {
-    VertexID central_vertex_0 = face_vertex[f0];
-    HalfEdgeID bd_edge;
-
-    vector<VertexID> vloop0;
-    circulate_face_ccw(m, f0, std::function<void(VertexID)>([&](VertexID v){
-        vloop0.push_back(v);
-    }) );
-
-
-    circulate_face_ccw(m, f0, std::function<void(HalfEdgeID)>([&](HalfEdgeID h){
-        if(m.walker(h).vertex() == central_vertex_0)
-            bd_edge = h;
-    }));
-
-
-
-    size_t L= vloop0.size();
-    VertexID split_vertex;
-
-    for(int i = 0; i < L; i++) {
-        if(vloop0[i] == central_vertex_0)
-            split_vertex = vloop0[(i+3)%L];
-    }
-
-    float dot_sum = 0;
-    float len = 0;
-
-    FaceID new_face = f0;
-    if(L == 4) {
-        if(m.walker(bd_edge).face() == f0)
-            new_face = m.walker(bd_edge).opp().face();
-        else
-            new_face = m.walker(bd_edge).face();
-    }
-    else {
-       new_face = m.split_face_by_edge(f0, central_vertex_0, split_vertex);
-       if(m.in_use(bd_edge))
-           m.merge_faces(m.walker(bd_edge).face(),bd_edge);
-      }
-
-    f0 = new_face;
-    face_vertex[new_face] = central_vertex_0;
-    return f0;
-}
-
-double compute_torsion_score(HMesh::Manifold& m, FaceID f0, FaceID f1) {
-
-  VertexID central_vertex_0 = face_vertex[f0];
-  VertexID central_vertex_1 = face_vertex[f1];
-  vector<VertexID> vloop0;
-  circulate_face_ccw(m, f0, std::function<void(VertexID)>([&](VertexID v){
-      vloop0.push_back(v);
-  }) );
-  vector<VertexID> vloop1;
-  circulate_face_ccw(m, f1, std::function<void(VertexID)>([&](VertexID v){
-      vloop1.push_back(v);
-  }) );
-  float len = 0;
-  float dot_sum = FLT_MAX;
-  size_t L= vloop0.size();
-
-  if(central_vertex_0 != InvalidVertexID && central_vertex_1 != InvalidVertexID) {
-
-    for(int j_off = 0; j_off < L; ++j_off) {
-       bool center_match = false;
-       for(int i=0;i<L;++i)
-          if(vloop0[i] == central_vertex_0 && vloop1[(L + j_off - i)%L] == central_vertex_1)
-              center_match = true;
-       if(center_match) {
-         len = 0;
-          for(int i=0;i<L;i++) {
-              Vec3d bridge_edge_i, bridge_edge_j;
-              len += abs(length(m.pos(vloop0[i]) - m.pos(vloop1[(L+j_off - i)%L])));
-              bridge_edge_i = normalize(m.pos(vloop0[i]) - m.pos(vloop1[(L+j_off - i)%L]));
-              for(int j = 0; j < L; j++) {
-                bridge_edge_j = normalize(m.pos(vloop0[j]) - m.pos(vloop1[(L+j_off - j)%L]));
-                double curr_dot_sum = abs(dot(bridge_edge_i, bridge_edge_j));
-                if(curr_dot_sum < dot_sum)
-                  dot_sum = curr_dot_sum;
-              }
-          }
-       }
-     }
-     return dot_sum;
-   }
-   else {
-     float min_len = FLT_MAX;
-     int j_off_min_len = -1;
-     for(int j_off = 0; j_off < L; j_off = j_off + 1) {
-         len = 0;
-         for(int i=0;i<L;++i) {
-             Vec3d bridge_edge_i, bridge_edge_j;
-             bridge_edge_i = normalize(m.pos(vloop0[i]) - m.pos(vloop1[(L+j_off - i)%L]));
-             for(int j = 0; j < L; j++) {
-               bridge_edge_j = normalize(m.pos(vloop0[j]) - m.pos(vloop1[(L+j_off - j)%L]));
-               double curr_dot_sum = abs(dot(bridge_edge_i, bridge_edge_j));
-               if(curr_dot_sum < dot_sum)
-                 dot_sum = curr_dot_sum;
-             }
-             len += sqr_length(m.pos(vloop0[i]) - m.pos(vloop1[(L+j_off - i)%L]));
-         }
-         if(len < min_len)   {
-             j_off_min_len = j_off;
-             min_len = len;
-         }
-     }
-     return dot_sum;
-   }
-   return len;
-}
-
-vector<pair<VertexID, VertexID>> face_match_careful(HMesh::Manifold& m, FaceID &f0, FaceID &f1,
-                                                    const Geometry::AMGraph3D& g, NodeID n, NodeID nn) {
-
-    vector<pair<VertexID, VertexID> > connections;
-    if(!m.in_use(f0) || !m.in_use(f1))
-        return connections;
-
-    vector<VertexID> loop0;
-    circulate_face_ccw(m, f0, std::function<void(VertexID)>([&](VertexID v){
-        loop0.push_back(v);
-    }));
-
-    vector<VertexID> loop1;
-    circulate_face_ccw(m, f1, std::function<void(VertexID)>( [&](VertexID v) {
-        loop1.push_back(v);
-    }));
-
-    size_t L0= loop0.size();
-    size_t L1= loop1.size();
-
-    if (L0 != L1)
-        return connections;
-
-    size_t L = L0;
-
-    if(face_vertex[f0] == InvalidVertexID || face_vertex[f1] == InvalidVertexID) {
-
-        FaceID new_face = InvalidFaceID;
-
-        if(face_vertex[f0] != InvalidVertexID) {
-          if(g.valence(n) > 2) {
-            int central_valency = valency(m, face_vertex[f0]);
-            int rot_iters = L - 2 + (central_valency - 1)*2;
-            double min_torsion_score = FLT_MAX;
-            new_face = f0;
-            for (int rot = 0; rot < 2*rot_iters; rot++) {
-              new_face = rotate_bridge_face_set_once(m, new_face);
-              double curr_torsion_score = compute_torsion_score(m, new_face, f1);
-              if(curr_torsion_score < min_torsion_score)
-                min_torsion_score = curr_torsion_score;
-            }
-            for (int rot = 0; rot < 2*rot_iters; rot++) {
-              new_face = rotate_bridge_face_set_once(m, new_face);
-              double curr_torsion_score = compute_torsion_score(m, new_face, f1);
-              if(curr_torsion_score == min_torsion_score)
-                break;
-            }
-            if(new_face != InvalidFaceID) {
-              f0 = new_face;
-              loop0.clear();
-              circulate_face_ccw(m, f0, std::function<void(VertexID)>([&](VertexID v){
-                  loop0.push_back(v);
-              }));
-            }
-          }
-        }
-
-        if(face_vertex[f1] != InvalidVertexID) {
-          if(g.valence(nn) > 2) {
-            int central_valency = valency(m, face_vertex[f1]);
-            int rot_iters = L - 2 + (central_valency - 1)*2;
-            double min_torsion_score = FLT_MAX;
-            new_face = f1;
-            compute_torsion_score(m, f0, new_face);
-            for (int rot = 0; rot < 2*rot_iters; rot++) {
-              new_face = rotate_bridge_face_set_once(m, new_face);
-              double curr_torsion_score = compute_torsion_score(m, f0, new_face);
-              if(curr_torsion_score < min_torsion_score)
-                min_torsion_score = curr_torsion_score;
-            }
-            for (int rot = 0; rot < 2*rot_iters; rot++) {
-              new_face = rotate_bridge_face_set_once(m, new_face);
-              double curr_torsion_score = compute_torsion_score(m, f0, new_face);
-              if(curr_torsion_score == min_torsion_score)
-                break;
-            }
-            if(new_face != InvalidFaceID) {
-              f1 = new_face;
-              loop1.clear();
-              circulate_face_ccw(m, f1, std::function<void(VertexID)>( [&](VertexID v) {
-                  loop1.push_back(v);
-              }));
-            }
-          }
-        }
-        float min_len = FLT_MAX;
-        int j_off_min_len = -1;
-        for(int j_off = 0; j_off < L; j_off = j_off + 1) {
-            float len = 0;
-            for(int i=0;i<L;++i)
-                len += sqr_length(m.pos(loop0[i]) - m.pos(loop1[(L+j_off - i)%L]));
-            if(len < min_len)   {
-                j_off_min_len = j_off;
-                min_len = len;
-            }
-        }
-
-        for (int i = 0; i < L; i++) {
-
-            VertexID v0 = loop0[i];
-            VertexID v1 = loop1[(L + j_off_min_len - i)%L];
-
-            if(face_vertex[f1] == v1) {
-                Walker w = m.walker(f0);
-                face_vertex[f0] = v0;
-                face_vertex[m.walker(w.halfedge()).opp().face()] = v0;
-            }
-
-            else if (face_vertex[f0] == v0) {
-
-                Walker w = m.walker(f1);
-                face_vertex[f1] = v1;
-                face_vertex[m.walker(w.halfedge()).opp().face()] = v1;
-            }
-
-        }
-
-    for(int i=0;i<L;++i)
-      connections.push_back(pair<VertexID, VertexID>(loop0[i],loop1[(L+ j_off_min_len - i)%L]));
-    }
-
-    else {
-        VertexID central_vertex_0 = face_vertex[f0];
-        VertexID central_vertex_1 = face_vertex[f1];
-        int central_valency = valency(m, central_vertex_0);
-        int rot_iters = L - 2 + (central_valency - 1)*2;
-        double min_torsion_score = -FLT_MAX;
-        FaceID new_face = f0;
-
-        for (int rot = 0; rot < 2*rot_iters; rot++) {
-          new_face = rotate_bridge_face_set_once(m, new_face);
-          double curr_torsion_score = compute_torsion_score(m, new_face, f1);
-          if(curr_torsion_score > min_torsion_score)
-            min_torsion_score = curr_torsion_score;
-        }
-
-        for (int rot = 0; rot < 2*rot_iters; rot++) {
-          new_face = rotate_bridge_face_set_once(m, new_face);
-          double curr_torsion_score = compute_torsion_score(m, new_face, f1);
-          if(curr_torsion_score == min_torsion_score)
-            break;
-        }
-
-        if(new_face != InvalidFaceID)
-            f0 = new_face;
-        else {
-            return connections;
-        }
-
-        if(f0 == InvalidFaceID) {
-            return connections;
-        }
-
-
-        loop0.clear();
-        circulate_face_ccw(m, f0, std::function<void(VertexID)>([&](VertexID v){
-            loop0.push_back(v);
-        }) );
-
-        loop1.clear();
-        circulate_face_ccw(m, f1, std::function<void(VertexID)>( [&](VertexID v) {
-            loop1.push_back(v);
-        }) );
-
-        int j_off_min_len = -1;
-        for(int j_off = 0; j_off < L; j_off = j_off + 1) {
-            bool center_match = false;
-            for(int i=0;i<L;++i) {
-                if(loop0[i] == central_vertex_0 && loop1[(L + j_off - i)%L] == central_vertex_1)
-                    center_match = true;
-
-            }
-            if(center_match) {
-                j_off_min_len = j_off;
-            }
-        }
-
-    for(int i=0;i<L;++i)
-        connections.push_back(pair<VertexID, VertexID>(loop0[i],loop1[(L+ j_off_min_len - i)%L]));
-
-    }
-
-
-    return connections;
-}
-
-
-vector<pair<VertexID, VertexID>> face_match_one_ring(HMesh::Manifold& m, FaceID &f0, FaceID &f1,
+vector<pair<VertexID, VertexID>> face_match_one_ring(const HMesh::Manifold& m, FaceID &f0, FaceID &f1,
                                                      const Geometry::AMGraph3D& g, NodeID n, NodeID nn) {
 
     vector<pair<VertexID, VertexID> > connections;
@@ -1374,11 +973,8 @@ vector<pair<VertexID, VertexID>> face_match_one_ring(HMesh::Manifold& m, FaceID 
 
     bool fv_flag = false;
 
-    Vec3d v_n_nn = normalize(g.pos[n] - g.pos[nn]);
-
-
     if(face_vertex_0 != InvalidVertexID && face_vertex_1 != InvalidVertexID)
-      fv_flag = true;
+        fv_flag = true;
 
     int loop0_index = 0, loop1_index = 0;
 
@@ -1389,7 +985,7 @@ vector<pair<VertexID, VertexID>> face_match_one_ring(HMesh::Manifold& m, FaceID 
     circulate_face_ccw(m, f0, std::function<void(VertexID)>([&](VertexID v){
         loop0.push_back(v);
         if(v == face_vertex_0)
-          loop0_index = count;
+            loop0_index = count;
         count++;
     }) );
 
@@ -1399,7 +995,7 @@ vector<pair<VertexID, VertexID>> face_match_one_ring(HMesh::Manifold& m, FaceID 
     circulate_face_ccw(m, f1, std::function<void(VertexID)>( [&](VertexID v) {
         loop1.push_back(v);
         if(v == face_vertex_1)
-          loop1_index = count;
+            loop1_index = count;
         count++;
     }) );
 
@@ -1415,158 +1011,222 @@ vector<pair<VertexID, VertexID>> face_match_one_ring(HMesh::Manifold& m, FaceID 
 
     if(one_ring_face_vertex[f0] == InvalidVertexID || one_ring_face_vertex[f1] == InvalidVertexID) {
 
-      float min_len = FLT_MAX;
+        float min_len = FLT_MAX;
 
-      for(int j_off = 0; j_off < L; j_off = j_off + 1) {
-        Vec3d bridge_edge_i, bridge_edge_j;
-        float len = 0;
+        for(int j_off = 0; j_off < L; j_off = j_off + 1) {
+            Vec3d bridge_edge_i, bridge_edge_j;
+            float len = 0;
 
-        for(int i=0;i<L;++i) {
-          len += sqr_length(m.pos(loop0[i]) - m.pos(loop1[(L+j_off - i)%L]));
-        }
-           if(len < min_len)   {
-            j_off_min_len = j_off;
-            min_len = len;
-           }
-      }
-
-      int found_flag = 0;
-
-      for (int i = 0; i < L; i++) {
-
-        VertexID v0 = loop0[i];
-        VertexID v1 = loop1[(L + j_off_min_len - i)%L];
-
-        if(face_vertex_1 == v1) {
-            Walker w = m.walker(f0);
-            one_ring_face_vertex[f0] = v0;
-            one_ring_face_vertex[m.walker(w.halfedge()).opp().face()] = v0;
-            found_flag = 1;
+            for(int i=0;i<L;++i) {
+                len += sqr_length(m.pos(loop0[i]) - m.pos(loop1[(L+j_off - i)%L]));
+            }
+            if(len < min_len)   {
+                j_off_min_len = j_off;
+                min_len = len;
+            }
         }
 
-        else if (face_vertex_0 == v0) {
-            Walker w = m.walker(f1);
-            one_ring_face_vertex[f1] = v1;
-            one_ring_face_vertex[m.walker(w.halfedge()).opp().face()] = v1;
-            found_flag = 1;
-        }
-      }
+        int found_flag = 0;
 
-      if(found_flag == 0 && (one_ring_face_vertex[f0] != InvalidVertexID || one_ring_face_vertex[f1] != InvalidVertexID)) {
-        connections.clear();
-        return connections;
-      }
+        for (int i = 0; i < L; i++) {
+
+            VertexID v0 = loop0[i];
+            VertexID v1 = loop1[(L + j_off_min_len - i)%L];
+
+            if(face_vertex_1 == v1) {
+                Walker w = m.walker(f0);
+                one_ring_face_vertex[f0] = v0;
+                one_ring_face_vertex[m.walker(w.halfedge()).opp().face()] = v0;
+                found_flag = 1;
+            }
+
+            else if (face_vertex_0 == v0) {
+                Walker w = m.walker(f1);
+                one_ring_face_vertex[f1] = v1;
+                one_ring_face_vertex[m.walker(w.halfedge()).opp().face()] = v1;
+                found_flag = 1;
+            }
+        }
+
+        if(found_flag == 0 && (one_ring_face_vertex[f0] != InvalidVertexID || one_ring_face_vertex[f1] != InvalidVertexID)) {
+            connections.clear();
+            return connections;
+        }
     }
     else {
 
-      for(int j_off = 0; j_off < L; j_off = j_off + 1) {
+        for(int j_off = 0; j_off < L; j_off = j_off + 1) {
 
-        bool center_match = false;
+            bool center_match = false;
 
-        for(int i=0;i<L;++i) {
-            if(loop0[i] == one_ring_face_vertex[f0] && loop1[(L + j_off - i)%L] == one_ring_face_vertex[f1])
-                center_match = true;
+            for(int i=0;i<L;++i) {
+                if(loop0[i] == one_ring_face_vertex[f0] && loop1[(L + j_off - i)%L] == one_ring_face_vertex[f1])
+                    center_match = true;
+
+            }
+            if(center_match) {
+                j_off_min_len = j_off;
+            }
 
         }
-        if(center_match) {
-            j_off_min_len = j_off;
+        float min_len = FLT_MAX;
+        for(int j_off = j_off_min_len; j_off < 2*L; j_off = j_off + 2) {
+
+            float len = 0;
+
+            for(int i=0;i<L;++i)
+                len += sqr_length(m.pos(loop0[i]) - m.pos(loop1[(L+j_off - i)%L]));
+
+
+            if(len < min_len)   {
+                j_off_min_len = j_off;
+                min_len = len;
+            }
+
         }
+    }
 
-      }
-      float min_len = FLT_MAX;
-      for(int j_off = j_off_min_len; j_off < 2*L; j_off = j_off + 2) {
-
-        float len = 0;
-
-        for(int i=0;i<L;++i)
-          len += sqr_length(m.pos(loop0[i]) - m.pos(loop1[(L+j_off - i)%L]));
+    for(int i=0;i<L;++i)
+        connections.push_back(pair<VertexID, VertexID>(loop0[i],loop1[(L+ j_off_min_len - i)%L]));
 
 
-      if(len < min_len)   {
-       j_off_min_len = j_off;
-       min_len = len;
-      }
-
-     }
-   }
-
-   for(int i=0;i<L;++i)
-    connections.push_back(pair<VertexID, VertexID>(loop0[i],loop1[(L+ j_off_min_len - i)%L]));
-
-
-   return connections;
+    return connections;
 }
 
-FaceID find_bridge_face(HMesh::Manifold &m_out,
+FaceID find_bridge_face(const HMesh::Manifold &m_out,
                         const Geometry::AMGraph3D& g, NodeID start_node, NodeID next_node, Util::AttribVec<NodeID, FaceSet>& node2fs) {
 
-  FaceID f0;
+    FaceID f0;
 
-  auto best_face = [&](NodeID n, NodeID nn) {
-      Vec3d pn = g.pos[n];
-      Vec3d pnn = g.pos[nn];
-      Vec3d v_n_nn = pnn - pn;
-      double d_max = -1000;
-      FaceID f_max = InvalidFaceID;
-      v_n_nn = normalize(v_n_nn);
-      for(auto f: node2fs[n]) {
-          double d = dot(v_n_nn, normal(m_out, f));
-          if(d> d_max) {
-              f_max = f;
-              d_max = d;
-          }
+    auto best_face = [&](NodeID n, NodeID nn) {
+        Vec3d pn = g.pos[n];
+        Vec3d pnn = g.pos[nn];
+        Vec3d v_n_nn = pnn - pn;
+        double d_max = -1000;
+        FaceID f_max = InvalidFaceID;
+        v_n_nn = normalize(v_n_nn);
+        for(auto f: node2fs[n]) {
+            double d = dot(v_n_nn, normal(m_out, f));
+            if(d> d_max) {
+                f_max = f;
+                d_max = d;
+            }
 
-      }
-      node2fs[n].erase(f_max);
-      return f_max;
-  };
+        }
+        node2fs[n].erase(f_max);
+        return f_max;
+    };
 
-  if(g.neighbors(start_node).size()>2)  {
+    if(g.neighbors(start_node).size()>2)  {
 
-    auto key = std::make_pair(start_node,next_node);
-    f0 = branchface.find(key)->second;
-    VertexID v0 = branch_best_vertex.find(key)->second;
-    if(v0 != InvalidVertexID)
-        face_vertex[f0] = v0;
+        auto key = std::make_pair(start_node,next_node);
+        f0 = branchface.find(key)->second;
+        VertexID v0 = branch_best_vertex.find(key)->second;
+        if(v0 != InvalidVertexID)
+            face_vertex[f0] = v0;
 
-  }
-  else
-    f0 = best_face(start_node,next_node);
+    }
+    else
+        f0 = best_face(start_node,next_node);
 
-  return f0;
+    return f0;
 
 }
 
 vector<pair<VertexID, VertexID>> find_bridge_connections(HMesh::Manifold &m_out, FaceID &f0, FaceID &f1,
                                                          const Geometry::AMGraph3D& g, NodeID n, NodeID nn) {
-  vector<pair<VertexID, VertexID>> connections;
+    vector<pair<VertexID, VertexID>> connections;
 
-  if(f0 == InvalidFaceID || f1 == InvalidFaceID)
+    if(f0 == InvalidFaceID || f1 == InvalidFaceID)
+        return connections;
+
+    if(face_vertex[f0] == InvalidVertexID && face_vertex[f1] == InvalidVertexID) {
+      connections = face_match_one_ring(m_out, f0, f1, g, n, nn);
+
+    }
+
+    else if (f0 != InvalidFaceID && f1 != InvalidFaceID) {
+      return connections;
+    }
+
     return connections;
-
-  if(face_vertex[f0] == InvalidVertexID && face_vertex[f1] == InvalidVertexID)
-    connections = face_match_one_ring(m_out, f0, f1, g, n, nn);
-
-  else if (f0 != InvalidFaceID && f1 != InvalidFaceID)
-    connections = face_match_careful(m_out, f0, f1, g, n, nn);
-
-  return connections;
 
 }
 
 //Setup Global arrays
 
 void init_graph_arrays(HMesh::Manifold &m_out, const Geometry::AMGraph3D& g, Util::AttribVec<NodeID, FaceSet>& node2fs) {
-  init_branch_degree(m_out, g, node2fs);
-  init_branch_face_pairs(m_out, g, node2fs);
-  merge_branch_faces(m_out, g, node2fs);
+    init_branch_degree(m_out, g, node2fs);
+    init_branch_face_pairs(m_out, g, node2fs);
+    merge_branch_faces(m_out, g, node2fs);
 }
+
+
+
+void skeleton_aware_smoothing(const Geometry::AMGraph3D& g,
+                              Manifold& m_out,
+                              const VertexAttributeVector<NodeID>& vertex2node,
+                              const vector<double>& node_radii) {
+    const int N_iter = 50;
+    for (int iter=0;iter<N_iter; ++iter) {
+
+
+        Util::AttribVec<AMGraph::NodeID,Vec3d> barycenters(g.no_nodes(), Vec3d(0));
+        Util::AttribVec<AMGraph::NodeID,int> cluster_cnt(g.no_nodes(), 0);
+        for(auto v: m_out.vertices()) {
+            NodeID n = vertex2node[v];
+            barycenters[n] += m_out.pos(v);
+            cluster_cnt[n] += 1;
+        }
+
+        for(auto n: g.node_ids()) {
+            barycenters[n] /= cluster_cnt[n];
+        }
+
+        auto new_pos = m_out.positions_attribute_vector();
+        for (auto v: m_out.vertices()) {
+            NodeID n = vertex2node[v];
+            double cnt = 0.0;
+            Vec3d lap(0.0);
+            Vec3d p0 = m_out.pos(v);
+            for (auto vn: m_out.incident_vertices(v)) {
+                NodeID nn = vertex2node[vn];
+                Vec3d pn = m_out.pos(vn);
+                double w = 1.0;
+                if(nn != n)
+                    w  = 0.25;
+                lap += w * (pn-p0);
+                cnt+=w;
+            }
+            lap /= cnt;
+            Vec3d dir = cond_normalize(m_out.pos(v) + 0.5 * lap - barycenters[n]);
+            Vec3d norm = normal(m_out, v);
+            if (dot(dir, norm)<0.0)
+                dir = norm;
+            dir = cond_normalize(dir);
+            double r = node_radii[n] * sqrt(g.valence(n)/2.0);
+            new_pos[v] = dir * r + g.pos[n];
+        }
+        m_out.positions_attribute_vector() = new_pos;
+        for (auto v: m_out.vertices()) {
+            NodeID n = vertex2node[v];
+            if(g.valence(n)==2) {
+                double r = node_radii[n];
+                new_pos[v] = 0.5 * (normal(m_out, v) * r + g.pos[n] + m_out.pos(v));
+            }
+        }
+        m_out.positions_attribute_vector() = new_pos;
+    }
+
+
+}
+
 
 //Main functions
 
-HMesh::Manifold graph_to_FEQ(const Geometry::AMGraph3D& g, const vector<double>& _node_radii) {
+HMesh::Manifold graph_to_FEQ(const Geometry::AMGraph3D& g, const vector<double>& _node_radii, bool use_symmetry) {
 
-    double r = 0.5 * g.average_edge_length();
+    double r = 0.25 * g.average_edge_length();
     Manifold m_out;
     Util::AttribVec<NodeID, FaceSet> node2fs;
 
@@ -1575,15 +1235,15 @@ HMesh::Manifold graph_to_FEQ(const Geometry::AMGraph3D& g, const vector<double>&
     vector node_radii = _node_radii;
     node_radii.resize(g.no_nodes());
     for(auto n : g.node_ids())
-      if(node_radii[n] == 0.0)
-          node_radii[n] = r;
+        if(node_radii[n] == 0.0)
+            node_radii[n] = r;
 
-    construct_bnps(m_out, g, node2fs, node_radii);
-    id_preserving_cc(m_out);
+    VertexAttributeVector<NodeID> vertex2node(AMGraph::InvalidNodeID);
+    construct_bnps(m_out, g, node2fs, vertex2node, node_radii, use_symmetry);
+//    construct_bnps(m_out, g, node2fs, vertex2node, node_radii, false);
     init_graph_arrays(m_out, g, node2fs);
 
-    FaceAttributeVector<int> ftouched(m_out.allocated_faces(),-1);
-    val2nodes_to_boxes(g, m_out, node2fs, node_radii);
+    val2nodes_to_boxes(g, m_out, node2fs, vertex2node, node_radii);
 
     for(auto f_id: m_out.faces()) {
         face_vertex[f_id] = InvalidVertexID;
@@ -1594,8 +1254,8 @@ HMesh::Manifold graph_to_FEQ(const Geometry::AMGraph3D& g, const vector<double>&
     bool has_junction = false;
 
     for (auto n: g.node_ids()) {
-      if(g.valence(n) > 2)
-        has_junction = true;
+        if(g.valence(n) > 2)
+            has_junction = true;
     }
 
     for (auto n: g.node_ids()) {
@@ -1628,30 +1288,28 @@ HMesh::Manifold graph_to_FEQ(const Geometry::AMGraph3D& g, const vector<double>&
 
 
                 if(g.valence(next_node) > g.valence(start_node)) {
-                  auto connections = find_bridge_connections(m_out, f1, f0, g, next_node, start_node);
-                  if(connections.size()!=0) {
-                    m_out.bridge_faces(f1,f0,connections);
-                    ftouched[f0] = 1;
-                    ftouched[f1] = 1;
-                  }
+                    auto connections = find_bridge_connections(m_out, f1, f0, g, next_node, start_node);
+                    if(connections.size()!=0) {
+                        m_out.bridge_faces(f1,f0,connections);
+                    }
                 }
                 else {
-                  auto connections = find_bridge_connections(m_out, f0, f1, g, start_node, next_node);
-                  if(connections.size()!=0) {
-                    m_out.bridge_faces(f0,f1,connections);
-                    ftouched[f0] = 1;
-                    ftouched[f1] = 1;
-                  }
+                    auto connections = find_bridge_connections(m_out, f0, f1, g, start_node, next_node);
+                    if(connections.size()!=0) {
+                        m_out.bridge_faces(f0,f1,connections);
+                    }
                 }
 
                 start_node = next_node;
                 if(nbd_list.size()==1)
-                  next_node = nbd_list[0];
+                    next_node = nbd_list[0];
 
             }  while(nbd_list.size()==1);
         }
     }
 
-    quad_mesh_leaves(m_out);
+    quad_mesh_leaves(m_out, vertex2node);
+    skeleton_aware_smoothing(g, m_out, vertex2node, node_radii);
+    m_out.cleanup();
     return m_out;
 }
